@@ -1,0 +1,78 @@
+#!/usr/bin/env sh
+#
+# Copyright (C) 2021 Germain Z. <germanosz@gmail.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFAULT_SIZE="1920x1080"
+RANGER_CACHE_DIR="$XDG_CACHE_HOME/ranger/"
+
+
+# To avoid duplicating preview files, we share ranger's cache directory.
+get_ranger_cache_path() {
+    full_path="$(readlink -f "$1")"
+    inode_num="$(stat -c '%i' "$1")"
+    cache_path="$(printf '%s%s' "$inode_num" "$full_path" | sha512sum | head -c 128)"
+    printf '%s%s' "$RANGER_CACHE_DIR" "$cache_path"
+}
+
+clear_image_preview() {
+    kitty +kitten icat --transfer-mode file --clear
+}
+
+preview_image() {
+    if [ -n "$1" ]; then
+        pos="$((FZF_PREVIEW_COLUMNS+6))"
+        kitty +kitten icat --transfer-mode file --place "${FZF_PREVIEW_COLUMNS}x${FZF_PREVIEW_LINES}@${pos}x1" "$1"
+    else
+        printf 'Could not preview %s (%s)' "$path" "$mimetype"
+    fi
+}
+
+
+path="$1"
+mimetype="$(file -b --mime-type "$path")"
+
+clear_image_preview
+
+case $mimetype in
+    image/*)
+        preview_image "$path"
+        ;;
+    application/pdf)
+        cache_path=$(get_ranger_cache_path "$path")
+        if [ ! -f "$cache_path" ]; then
+            pdftoppm -f 1 -l 1 \
+                     -scale-to-x "${DEFAULT_SIZE%x*}" \
+                     -scale-to-y -1 \
+                     -singlefile \
+                     -jpeg -tiffcompression jpeg \
+                     -- "$path" "$cache_path"
+        fi
+        preview_image "$cache_path.jpg"
+        ;;
+    video/*)
+        cache_path=$(get_ranger_cache_path "$path")
+        if [ ! -f "$cache_path" ]; then
+            ffmpegthumbnailer -i "$path" -o "$cache_path.jpg" -s 0
+        fi
+        preview_image "$cache_path.jpg"
+        ;;
+    audio/*)
+        mediainfo "$path"
+        ;;
+    *)
+        bat --style=numbers --color=always --line-range :500 "$path"
+        ;;
+esac
